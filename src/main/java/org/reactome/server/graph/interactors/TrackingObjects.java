@@ -16,11 +16,12 @@ import java.util.Map;
 
 import static org.reactome.server.graph.interactors.InteractionImporter.DBID;
 import static org.reactome.server.graph.interactors.InteractionImporter.NAME;
-import static org.reactome.server.graph.interactors.InteractionImporter.ORDER;
-import static org.reactome.server.graph.interactors.InteractionImporter.STOICHIOMETRY;
+import static org.reactome.server.graph.interactors.InteractionImporter.URL;
+import static org.reactome.server.graph.interactors.InteractionImporter.EBI_BASE_URL;
 import static org.reactome.server.graph.interactors.InteractionImporter.maxDbId;
 import static org.reactome.server.graph.interactors.InteractionImporter.createNode;
 import static org.reactome.server.graph.interactors.InteractionImporter.createRelationship;
+import static org.reactome.server.graph.interactors.InteractionImporter.stdRelationshipProp;
 
 class TrackingObjects {
 
@@ -30,24 +31,17 @@ class TrackingObjects {
 
     private static final DateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
-    private static final Map<String, Object> properties;
-    static {
-        properties = new HashMap<>();
-        properties.put(STOICHIOMETRY, 1);
-        properties.put(ORDER, 1);
-    }
-
-    static Long createIntActReferenceDatabase(Map<Long, Long> dbIds, Long graphImporterUserNode, Transaction tx) {
+    static Long createIntActReferenceDatabase(Transaction tx, Map<Long, Long> dbIds, Long graphImporterUserNode) {
         Class<?> schemaClass = ReferenceDatabase.class;
         Map<String, Object> intact = new HashMap<>();
         intact.put(DBID, ++maxDbId);
         intact.put(NAME, "IntAct");
-        intact.put("name", Collections.singletonList("IntAct").toArray(new String[1]));
+        intact.put(ReactomeJavaConstants.name, Collections.singletonList("IntAct").toArray(new String[1]));
         intact.put("schemaClass", schemaClass.getSimpleName());
-        intact.put("url", "https://www.ebi.ac.uk/intact");
-        intact.put("accessUrl", "https://www.ebi.ac.uk/intact/query/###ID###");
+        intact.put(URL, EBI_BASE_URL + "/intact");
+        intact.put(ReactomeJavaConstants.accessUrl, EBI_BASE_URL + "/intact/query/###ID###");
         Long id = createNode(tx, intact, InteractionImporter.getLabels(schemaClass));
-        addCreatedModified(id, graphImporterUserNode, tx);
+        addCreatedModified(tx, id, graphImporterUserNode);
         dbIds.put(maxDbId, id);
         return maxDbId;
     }
@@ -57,31 +51,31 @@ class TrackingObjects {
         Map<String, Object> grapUserNode = new HashMap<>();
         grapUserNode.put(DBID, ++maxDbId);
         grapUserNode.put(NAME, "Interactions Importer");
-        grapUserNode.put("firstname", "Interactions Importer");
-        grapUserNode.put("surname", "Script");
-        grapUserNode.put("initial", "AF");
+        grapUserNode.put(ReactomeJavaConstants.firstname, "Interactions Importer");
+        grapUserNode.put(ReactomeJavaConstants.surname, "Script");
+        grapUserNode.put(ReactomeJavaConstants.initial, "AF");
         grapUserNode.put("schemaClass", schemaClass.getSimpleName());
         return createNode(tx, grapUserNode, InteractionImporter.getLabels(schemaClass));
     }
 
-    static void addCreatedModified(Long node, Long graphImporterUserNode, Transaction tx) {
-        Long c = createInstanceEditNode(graphImporterUserNode, tx);
-        createRelationship(tx, c, node, created, properties);
+    static void addCreatedModified(Transaction tx, Long node, Long graphImporterUserNode) {
+        Long c = createInstanceEditNode(tx, graphImporterUserNode);
+        createRelationship(tx, c, node, created, stdRelationshipProp);
 
 //        Long m = createInstanceEditNode(graphImporterUserNode, batchInserter);
-//        ReactomeBatchImporter.saveRelationship(m, node, modified, properties);
+//        ReactomeBatchImporter.saveRelationship(m, node, modified, stdRelationshipProp);
     }
 
-    private static Long createInstanceEditNode(Long graphImporterUserNode, Transaction tx) {
+    private static Long createInstanceEditNode(Transaction tx, Long graphImporterUserNode) {
         Class<?> schemaClass = InstanceEdit.class;
         String dateTime = formatter.format(new Date());
         Map<String, Object> instanceEdit = new HashMap<>();
         instanceEdit.put(DBID, ++maxDbId);
         instanceEdit.put(NAME, "Interactions Importer, " + dateTime);
-        instanceEdit.put("dateTime", dateTime);
+        instanceEdit.put(ReactomeJavaConstants.dateTime, dateTime);
         instanceEdit.put("schemaClass", schemaClass.getSimpleName());
         long id = createNode(tx, instanceEdit, InteractionImporter.getLabels(schemaClass));
-        createRelationship(tx, graphImporterUserNode, id, author, properties);
+        createRelationship(tx, graphImporterUserNode, id, author, stdRelationshipProp);
         return id;
     }
 }

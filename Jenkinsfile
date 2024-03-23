@@ -34,64 +34,16 @@ pipeline
 				}
 			}
 		}
-		stage('Setup: Rename database')
+		stage('Main: Run interaction-importer')
 		{
-			// Normally, the relational database is named "release_current" but it need to be renamed to "reactome" because that's the name
-			// that needs to be in the graph database, otherwise the AnalysisService will report an error.
-			// "Renaming" the database really involves dumping to a temp file and then restoring it with a different name.
-			// TODO: Finish this stage.
 			steps
 			{
 				script
 				{
-					withCredentials([usernamePassword(credentialsId: 'mySQLUsernamePassword', passwordVariable: 'pass', usernameVariable: 'user')])
+					withCredentials([usernamePassword(credentialsId: 'graphdbCredentials', passwordVariable: 'pass', usernameVariable: 'user')])
 					{
-						def dumpfile = "${env.RELEASE_CURRENT}_${currentRelease}_before_graph_import.dump"
-						sh "mysqldump -u$user -p$pass ${env.RELEASE_CURRENT} > $dumpfile"
-						sh "mysql -h localhost -u$user -p$pass reactome < $dumpfile "
+						sh """java -jar target/InteractionImporter-exec.jar -h localhost -d reactome -u $user -p $pass """
 					}
-				}
-			}
-		}
-		stage('Main: Run graph-importer')
-		{
-			steps
-			{
-				script
-				{
-					withCredentials([usernamePassword(credentialsId: 'mySQLUsernamePassword', passwordVariable: 'pass', usernameVariable: 'user')])
-					{
-						sh """java -jar target/GraphImporter-exec.jar -h localhost -i -n ./graphdb -d reactome -u $user -p $pass """
-					}
-				}
-			}
-		}
-		stage('Post: Install graph database')
-		{
-			steps
-			{
-				script
-				{
-					// Stop services that are using the graph database.
-					sh "service tomcat9 stop"
-					sh "service neo4j stop"
-				}
-				script
-				{
-					// Remove old graphdb
-					sh "rm -rf /var/lib/neo4j/data/databases/graph.db"
-					// Set permissions
-					sh "chmod 644 ./graph.db/*"
-					sh "chmod a+x ./graph.db/schema/"
-					sh "chown -R neo4j:adm ./graph.db/"
-					// Move the graph database into position.
-					sh "mv -a ./graphdb /var/lib/neo4j/data/databases/graph.db"
-				}
-				script
-				{
-					// Start the services that were stopped.
-					sh "service neo4j start"
-					sh "service tomcat9 start"
 				}
 			}
 		}
@@ -113,7 +65,7 @@ pipeline
 					steps
 					{
 						checkout changelog: false, poll: false, scm: [$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: 'github credentials', url: 'https://github.com/reactome/graph-qa.git']]]
-						dir('./graph-importer')
+						dir('./interaction-importer')
 						{
 							script
 							{
