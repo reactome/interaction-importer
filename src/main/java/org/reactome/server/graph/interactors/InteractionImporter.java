@@ -149,11 +149,11 @@ public class InteractionImporter {
                     });
                 } else {
                     Interactor ib = intactInteraction.getInteractorB();
-                    Map<String, Object> toReferenceEntity = createReferenceEntityMap(ib);
-                    Long dbId = (Long) toReferenceEntity.get(DBID);
-                    Long refDbNode = (Long) toReferenceEntity.remove("referenceDatabaseNode");
-                    String[] labels = (String[]) toReferenceEntity.remove("labels");
-                    Long targetReferenceEntity = createNode(tx, toReferenceEntity, labels);
+                    Map<String, Object> toReferenceEntityMap = createReferenceEntityMap(ib);
+                    Long dbId = (Long) toReferenceEntityMap.get(DBID);
+                    Long refDbNode = (Long) toReferenceEntityMap.remove("referenceDatabaseNode");
+                    String[] labels = (String[]) toReferenceEntityMap.remove("labels");
+                    Long targetReferenceEntity = createNode(tx, toReferenceEntityMap, labels);
                     TrackingObjects.addCreatedModified(tx, targetReferenceEntity, graphImporterUserNode);
                     dbIds.put(dbId, targetReferenceEntity);
                     targetNodes.add(targetReferenceEntity);
@@ -180,8 +180,8 @@ public class InteractionImporter {
 
                     //Add interaction instance (UndirectedInteraction)
                     Long dbId = ++maxDbId;
-                    Map<String, Object> interaction = createInteractionMap(dbId, interactionName, intactInteraction);
-                    long interactionNode = createNode(tx, interaction, getLabels(UndirectedInteraction.class));
+                    Map<String, Object> interactionMap = createInteractionMap(dbId, interactionName, intactInteraction);
+                    long interactionNode = createNode(tx, interactionMap, getLabels(UndirectedInteraction.class));
                     createRelationship(tx, interactionNode, intActReferenceDatabaseNode, referenceDatabase, stdRelationshipProp);
                     TrackingObjects.addCreatedModified(tx, interactionNode, graphImporterUserNode);
                     dbIds.put(dbId, interactionNode);
@@ -275,17 +275,17 @@ public class InteractionImporter {
         String identifier = interactor.getAcc().split(" ")[0].trim();
         String rawIdentifier = identifier.contains(":") ? identifier.split(":")[1] : identifier;
 
-        Map<String, Object> referenceEntityMap = new HashMap<>();
-        referenceEntityMap.put(DBID, ++maxDbId);
+        Map<String, Object> _referenceEntityMap = new HashMap<>();
+        _referenceEntityMap.put(DBID, ++maxDbId);
 
         String gn = interactor.getAliasWithoutSpecies(false);
         if (gn != null && !gn.isEmpty()) {
             String[] geneName = new String[1];
             geneName[0] = gn;
-            referenceEntityMap.put("geneName", geneName);
-            referenceEntityMap.put(NAME, identifier + " " + gn);    //Unified to Reactome name
+            _referenceEntityMap.put("geneName", geneName);
+            _referenceEntityMap.put(NAME, identifier + " " + gn);    //Unified to Reactome name
         } else {
-            referenceEntityMap.put(NAME, identifier);               //Unified to Reactome name
+            _referenceEntityMap.put(NAME, identifier);               //Unified to Reactome name
         }
 
         Class<?> schemaClass;
@@ -293,55 +293,55 @@ public class InteractionImporter {
         if (resource.getName().toLowerCase().contains("uniprot")) {
             refDbId = REACTOME_UNIPROT_REFERENCE_DATABASE;
             //displayName added below
-            referenceEntityMap.put(IDENTIFIER, rawIdentifier.split("-")[0]);  //DO NOT MOVE OUTSIDE
-            referenceEntityMap.put(NAME, "UniProt");
+            _referenceEntityMap.put(IDENTIFIER, rawIdentifier.split("-")[0]);  //DO NOT MOVE OUTSIDE
+            _referenceEntityMap.put(NAME, "UniProt");
 
             String UNIPROT_BASE_URL = "https://www.uniprot.org/uniprotkb/";
             if (rawIdentifier.contains("-")) {
                 //for cases like UniProt:O00187-PRO_0000027598 MASP2
                 if(rawIdentifier.split("-")[1].contains("PRO")){
-                    referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier.split("-")[0] +"/entry#" + rawIdentifier.split("-")[1]);
+                    _referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier.split("-")[0] +"/entry#" + rawIdentifier.split("-")[1]);
                 } else {
-                    referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier + "/entry");
+                    _referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier + "/entry");
                 }
-                referenceEntityMap.put(VARIANT_IDENTIFIER, rawIdentifier);
+                _referenceEntityMap.put(VARIANT_IDENTIFIER, rawIdentifier);
                 //isofromParent //TODO
                 schemaClass = ReferenceIsoform.class;
             } else {
-                referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier + "/entry");
+                _referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier + "/entry");
                 schemaClass = ReferenceGeneProduct.class;
             }
         } else if (resource.getName().toLowerCase().contains("chebi")) {
             refDbId = REACTOME_CHEBI_REFERENCE_DATABASE;
             //displayName added below
-            referenceEntityMap.put(IDENTIFIER, rawIdentifier);  //DO NOT MOVE OUTSIDE
+            _referenceEntityMap.put(IDENTIFIER, rawIdentifier);  //DO NOT MOVE OUTSIDE
             String alias = interactor.getAlias();
             if(alias != null && !alias.isEmpty()) {
                 String[] name = new String[1];
                 name[0] = alias;
-                referenceEntityMap.put(ReactomeJavaConstants.name, name);
+                _referenceEntityMap.put(ReactomeJavaConstants.name, name);
             }
-            referenceEntityMap.put("databaseName", resource.getName());
-            referenceEntityMap.put(URL, EBI_BASE_URL + "/chebi/searchId.do?chebiId=CHEBI:" + rawIdentifier);
+            _referenceEntityMap.put("databaseName", resource.getName());
+            _referenceEntityMap.put(URL, EBI_BASE_URL + "/chebi/searchId.do?chebiId=CHEBI:" + rawIdentifier);
             schemaClass = ReferenceMolecule.class;
         } else {
             resource.setName("IntAct");
             refDbId = intActReferenceDatabaseDbId;
-            referenceEntityMap.put(IDENTIFIER, rawIdentifier);  //DO NOT MOVE OUTSIDE
-            referenceEntityMap.put("databaseName", resource.getName());
-            referenceEntityMap.put(URL, EBI_BASE_URL + "/intact/query/" + rawIdentifier);
+            _referenceEntityMap.put(IDENTIFIER, rawIdentifier);  //DO NOT MOVE OUTSIDE
+            _referenceEntityMap.put("databaseName", resource.getName());
+            _referenceEntityMap.put(URL, EBI_BASE_URL + "/intact/query/" + rawIdentifier);
             schemaClass = ReferenceGeneProduct.class;
         }
         if (interactor.getSynonyms() != null && !interactor.getSynonyms().isEmpty()) {
-            referenceEntityMap.put("secondaryIdentifier", interactor.getSynonyms().split("\\$"));
+            _referenceEntityMap.put("secondaryIdentifier", interactor.getSynonyms().split("\\$"));
         }
-        referenceEntityMap.put("schemaClass", schemaClass.getSimpleName());
+        _referenceEntityMap.put("schemaClass", schemaClass.getSimpleName());
 
         //These two will be removed from the map
-        referenceEntityMap.put("referenceDatabaseNode", dbIds.get(refDbId));
-        referenceEntityMap.put("labels", getLabels(schemaClass));
+        _referenceEntityMap.put("referenceDatabaseNode", dbIds.get(refDbId));
+        _referenceEntityMap.put("labels", getLabels(schemaClass));
 
-        return referenceEntityMap;
+        return _referenceEntityMap;
     }
 
     /**
