@@ -294,7 +294,7 @@ public class InteractionImporter {
             refDbId = REACTOME_UNIPROT_REFERENCE_DATABASE;
             //displayName added below
             _referenceEntityMap.put(IDENTIFIER, rawIdentifier.split("-")[0]);  //DO NOT MOVE OUTSIDE
-            _referenceEntityMap.put(NAME, "UniProt");
+            _referenceEntityMap.put("databaseName", "UniProt");
 
             String UNIPROT_BASE_URL = "https://www.uniprot.org/uniprotkb/";
             if (rawIdentifier.contains("-")) {
