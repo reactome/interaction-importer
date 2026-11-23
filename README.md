@@ -2,6 +2,14 @@
 
 # Reactome Graph Database Batch Importer
 
+> **The goal of this repository:** the IntAct interaction import, moved out of
+> [graph-importer](https://github.com/reactome/graph-importer). graph-importer builds the
+> graph from the relational database *and* imports the interactions; once this importer is a
+> release step of its own, graph-importer stops importing interactions (it is run without
+> `-i`), a step towards retiring graph-importer. The move itself is in
+> [#2](https://github.com/reactome/interaction-importer/pull/2); until it is merged, the
+> description below is graph-importer's.
+
 ## What is the Reactome Graph Batch Importer project
 
 The Graph Importer is a tool used for initial data conversion from the Reactome relational database to a graph database. To maximise import performance the Neo4j Graph Importer is utilised to directly create the Neo4j database file structure. This process is unsafe ignoring transactions, constraints or other safety features. Constraints will be checked once the import process has finished. 
