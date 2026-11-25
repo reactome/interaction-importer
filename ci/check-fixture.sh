@@ -15,8 +15,8 @@ cd "$(dirname "$0")/.."
 NAME=interaction-importer-fixture
 PORT=${FIXTURE_PORT:-7699}
 JAR=target/InteractionImporter-exec.jar
-docker rm -f "$NAME" >/dev/null 2>&1 || true
-trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
+docker rm -fv "$NAME" >/dev/null 2>&1 || true
+trap 'docker rm -fv "$NAME" >/dev/null 2>&1 || true' EXIT
 docker run -d --name "$NAME" -p "127.0.0.1:$PORT:7687" -e NEO4J_AUTH=none neo4j:4.3.24-community >/dev/null
 for _ in $(seq 60); do docker exec "$NAME" cypher-shell "RETURN 1" >/dev/null 2>&1 && break; sleep 2; done
 docker exec -i "$NAME" cypher-shell < ci/fixture/graph.cypher
