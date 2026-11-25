@@ -5,6 +5,8 @@ import org.neo4j.driver.AuthTokens;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.GraphDatabase;
 import org.neo4j.driver.Session;
+import org.neo4j.driver.SessionConfig;
+import org.neo4j.driver.Transaction;
 import org.reactome.server.graph.interactors.InteractionImporter;
 
 import java.io.File;
@@ -13,7 +15,6 @@ import java.io.File;
  * @author Florian Korninger (florian.korninger@ebi.ac.uk)
  */
 public class Main {
-    public static final String DEFAULT_INTACT_FILE = "./src/main/resources/intact-micluster.txt";
     private static final int EXIT_FAILURE = 1;
     public static void main(String[] args) throws JSAPException {
         JSAPResult config = loadJSAP(args);
@@ -34,10 +35,11 @@ public class Main {
                 new Parameter[]{
                         new FlaggedOption(  "host",         JSAP.STRING_PARSER,   "localhost",          JSAP.NOT_REQUIRED, 'h', "host",         "The database host"),
                         new FlaggedOption(  "port",         JSAP.INTEGER_PARSER,  "7687",               JSAP.NOT_REQUIRED, 's', "port",         "The reactome port"),
-                        new FlaggedOption(  "name",         JSAP.STRING_PARSER,   "reactome",           JSAP.NOT_REQUIRED, 'd', "name",         "The reactome database name to connect to"),
+                        new FlaggedOption(  "name",         JSAP.STRING_PARSER,   JSAP.NO_DEFAULT,      JSAP.NOT_REQUIRED, 'd', "name",         "The graph database to write to (the server's default if not given)"),
                         new FlaggedOption(  "user",         JSAP.STRING_PARSER,   "neo4j",              JSAP.NOT_REQUIRED, 'u', "user",         "The database user"),
                         new FlaggedOption(  "password",     JSAP.STRING_PARSER,   "neo4j",              JSAP.NOT_REQUIRED, 'p', "password",     "The password to connect to the database"),
-                        new FlaggedOption(  "intactFile",   JSAP.STRING_PARSER,   DEFAULT_INTACT_FILE,      JSAP.NOT_REQUIRED, 'f', "intactFile",   "Path to the interaction data file"),
+                        new FlaggedOption(  "intactFile",   JSAP.STRING_PARSER,   JSAP.NO_DEFAULT,          JSAP.NOT_REQUIRED, 'f', "intactFile",   "Path to the interaction data file (downloaded from IntAct if not given, as graph-importer did)"),
+                        new FlaggedOption(  "minimum",      JSAP.INTEGER_PARSER,  "1",                  JSAP.NOT_REQUIRED, 'm', "minimum",      "The fewest interactions a run may add: fewer, and nothing is committed (IntAct's parser reports a bad file only in its log)"),
                         new QualifiedSwitch("sqlLite",      JSAP.BOOLEAN_PARSER,  JSAP.NO_DEFAULT,          JSAP.NOT_REQUIRED, 'q', "sqlLite",      "Whether the provided file is an SQLite database or a intact-micluster.txt file to be parsed"),
                         new QualifiedSwitch("bar",          JSAP.BOOLEAN_PARSER,  JSAP.NO_DEFAULT,          JSAP.NOT_REQUIRED, 'b', "bar",          "Forces final status")
                 }
@@ -67,20 +69,41 @@ public class Main {
         }
     }
 
+    /**
+     * Imports the interactions in one transaction: all of them or, on any failure, none.
+     * Not a managed transaction (writeTransaction), which would run the whole import again
+     * on a transient error. A graph that already has interactions is refused: run twice, the
+     * import would add every interaction, and its IntAct database and Person, a second time.
+     */
     private static void executeInteractionDataImport(JSAPResult config, String intactFile) {
-        try (Driver driver = getDriver(config); Session session = driver.session()) {
-            session.writeTransaction(tx -> {
+        String database = config.getString("name");
+        SessionConfig sessionConfig = database == null
+                ? SessionConfig.defaultConfig()
+                : SessionConfig.forDatabase(database);
+        try (Driver driver = getDriver(config); Session session = driver.session(sessionConfig)) {
+            long existing = session.readTransaction(tx ->
+                    tx.run("MATCH (i:Interaction) RETURN count(i) AS n").single().get("n").asLong());
+            if (existing > 0) {
+                System.err.printf("The graph already has %,d interactions: not importing them again.%n", existing);
+                System.exit(EXIT_FAILURE);
+            }
+            try (Transaction tx = session.beginTransaction()) {
                 InteractionImporter interactionImporter = new InteractionImporter(
                         tx,
                         intactFile,
                         config.getBoolean("sqlLite")
                 );
-
-                interactionImporter.addInteractionData(tx);
-                // save changes in graph db
+                int added = interactionImporter.addInteractionData(tx);
+                int minimum = config.getInt("minimum");
+                if (added < minimum) {
+                    // Rolled back: a graph with a part of IntAct's interactions, and the
+                    // importer's own nodes, would refuse a rerun.
+                    System.err.printf("%,d interactions, fewer than the %,d expected: nothing committed.%n", added, minimum);
+                    tx.rollback();
+                    System.exit(EXIT_FAILURE);
+                }
                 tx.commit();
-                return null;
-            });
+            }
         }
     }
 
