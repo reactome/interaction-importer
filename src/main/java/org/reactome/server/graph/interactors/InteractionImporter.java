@@ -100,7 +100,26 @@ public class InteractionImporter {
         return maxDbIdRecord.get("maxDbId").asLong();
     }
 
-    public void addInteractionData(Transaction tx) {
+    /**
+     * A ReferenceEntity's identifier as IntAct names it: its variantIdentifier, else its
+     * identifier; a blank one is none, as graph-importer reads it (its stId skips a blank
+     * variantIdentifier), or the entity would be keyed "UniProt:" and never matched.
+     */
+    private static String identifierOf(Node referenceEntity) {
+        for (String key : new String[]{VARIANT_IDENTIFIER, IDENTIFIER}) {
+            if (!referenceEntity.get(key).isNull()) {
+                String value = referenceEntity.get(key).asString();
+                if (!value.isBlank()) return value;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Adds the interactions in this transaction.
+     * @return how many interactions were added
+     */
+    public int addInteractionData(Transaction tx) {
         long start = System.currentTimeMillis();
         initialise();
 
@@ -126,6 +145,7 @@ public class InteractionImporter {
                 addedReferenceEntities,
                 getTimeFormatted(time)
         );
+        return addedInteractions.size();
     }
 
     private int processReferenceEntity(Transaction tx, Node referenceEntity, Long graphImporterUserNode, Long intActReferenceDatabaseNode, Set<Long> addedInteractions) {
@@ -133,9 +153,7 @@ public class InteractionImporter {
         final Long sourceReferenceEntity = dbIds.get(referenceEntity.get(DBID).asLong());
         if (sourceReferenceEntity == null) return addedReferenceEntities;
 
-        String sourceIdentifier = null;
-        if (!referenceEntity.get(VARIANT_IDENTIFIER).isNull()) sourceIdentifier = referenceEntity.get(VARIANT_IDENTIFIER).asString();
-        else if (!referenceEntity.get(IDENTIFIER).isNull()) sourceIdentifier = referenceEntity.get(IDENTIFIER).asString();
+        String sourceIdentifier = identifierOf(referenceEntity);
         if (sourceIdentifier != null) {
             String resource = getReferenceDatabaseName(tx, referenceEntity);
             for (Interaction intactInteraction : getIntActInteraction(resource, sourceIdentifier)) {
@@ -463,9 +481,8 @@ public class InteractionImporter {
                 withoutDatabase++;
                 continue;
             }
-            String identifier = !re.get(VARIANT_IDENTIFIER).isNull()
-                    ? re.get(VARIANT_IDENTIFIER).asString()
-                    : re.get(IDENTIFIER).asString();
+            String identifier = identifierOf(re);
+            if (identifier == null) continue;
             identifier = record.get("database").asString() + ":" + identifier;
             referenceEntityMap.computeIfAbsent(identifier, k -> new HashSet<>()).add(re.get(DBID).asLong());
             if (record.get("target").asBoolean()) targetReferenceEntities.add(re);

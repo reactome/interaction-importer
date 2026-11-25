@@ -39,6 +39,7 @@ public class Main {
                         new FlaggedOption(  "user",         JSAP.STRING_PARSER,   "neo4j",              JSAP.NOT_REQUIRED, 'u', "user",         "The database user"),
                         new FlaggedOption(  "password",     JSAP.STRING_PARSER,   "neo4j",              JSAP.NOT_REQUIRED, 'p', "password",     "The password to connect to the database"),
                         new FlaggedOption(  "intactFile",   JSAP.STRING_PARSER,   JSAP.NO_DEFAULT,          JSAP.NOT_REQUIRED, 'f', "intactFile",   "Path to the interaction data file (downloaded from IntAct if not given, as graph-importer did)"),
+                        new FlaggedOption(  "minimum",      JSAP.INTEGER_PARSER,  "1",                  JSAP.NOT_REQUIRED, 'm', "minimum",      "The fewest interactions a run may add: fewer, and nothing is committed (IntAct's parser reports a bad file only in its log)"),
                         new QualifiedSwitch("sqlLite",      JSAP.BOOLEAN_PARSER,  JSAP.NO_DEFAULT,          JSAP.NOT_REQUIRED, 'q', "sqlLite",      "Whether the provided file is an SQLite database or a intact-micluster.txt file to be parsed"),
                         new QualifiedSwitch("bar",          JSAP.BOOLEAN_PARSER,  JSAP.NO_DEFAULT,          JSAP.NOT_REQUIRED, 'b', "bar",          "Forces final status")
                 }
@@ -92,7 +93,15 @@ public class Main {
                         intactFile,
                         config.getBoolean("sqlLite")
                 );
-                interactionImporter.addInteractionData(tx);
+                int added = interactionImporter.addInteractionData(tx);
+                int minimum = config.getInt("minimum");
+                if (added < minimum) {
+                    // Rolled back: a graph with a part of IntAct's interactions, and the
+                    // importer's own nodes, would refuse a rerun.
+                    System.err.printf("%,d interactions, fewer than the %,d expected: nothing committed.%n", added, minimum);
+                    tx.rollback();
+                    System.exit(EXIT_FAILURE);
+                }
                 tx.commit();
             }
         }

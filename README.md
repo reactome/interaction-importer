@@ -30,19 +30,23 @@ Usage:
   [(-p|--password) <password>]  Its password
   [(-f|--intactFile) <file>]    IntAct's intact-micluster.txt, or with -q an interactors SQLite
                                 database; if not given, IntAct's current file is downloaded
+  [(-m|--minimum) <n>]          The fewest interactions a run may add (default: 1); fewer and
+                                nothing is committed. IntAct's parser reports a bad file only in
+                                its log, so this is what stops a run on part of the file.
 ```
 
 Example, as the release runs it (`Jenkinsfile`):
 ```bash
-java -jar target/InteractionImporter-exec.jar -h localhost -d graph.db -u neo4j -p <password>
+java -jar target/InteractionImporter-exec.jar -h localhost -d graph.db -m 70000 -u neo4j -p <password>
 ```
 
 #### Checking it
 
-`ci/check-fixture.sh` runs the importer against a small graph (`ci/fixture/graph.cypher`) and
-four rows of IntAct's own file, and checks it writes what graph-importer did: the
-ReferenceEntities it adds (identifier, stId, species), the interactions and their
-interactors, and that a second run is refused. It needs Docker and a JDK 17:
+`ci/check-fixture.sh` runs the importer against a small graph (`ci/fixture/graph.cypher`, with
+the release graph's unique dbId and stId) and six rows of IntAct's own file, and checks it
+writes what graph-importer did: which entities are targets, the ReferenceEntities it adds
+(identifier, stId, species), the interactions and their interactors; that a second run is
+refused; and that a run adding fewer than its minimum commits nothing. It needs Docker and a JDK 17:
 
 ```bash
 mvn package -DskipTests && ci/check-fixture.sh
