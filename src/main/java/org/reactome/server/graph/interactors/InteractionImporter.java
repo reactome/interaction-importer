@@ -35,7 +35,7 @@ import static org.reactome.server.graph.utils.FormatUtils.getTimeFormatted;
 
 /**
  * Imports interaction data from the IntAct database.
- * Uses the interactors-core project (https://github.com/reactome-pwp/interactors-core)
+ * Uses the interactors-core project (https://github.com/reactome/interactors-core)
  */
 public class InteractionImporter {
 
@@ -45,6 +45,8 @@ public class InteractionImporter {
     private static final String IDENTIFIER = ReactomeJavaConstants.identifier;
     private static final String VARIANT_IDENTIFIER = ReactomeJavaConstants.variantIdentifier;
     public static final String NAME = "displayName";
+    // The stId graph-importer gives a ReferenceEntity this creates (a80d01e, 11999c4, aeeb562)
+    private static final String ST_ID = "stId";
     public static final String URL = ReactomeJavaConstants.url;
 
     public static final String STOICHIOMETRY = "stoichiometry";
@@ -206,7 +208,9 @@ public class InteractionImporter {
      * @param tx Neo4j Driver transaction
      * @param props The properties of the node
      * @param labels Labels of the node
-     * @return The Neo4j database ID of the created node, or -1 if node creation failed
+     * @return The Neo4j database ID of the created node
+     * @throws IllegalStateException if it was not created: the import's transaction is then
+     *         rolled back, so the graph gets all of the interactions or none
      */
     public static long createNode(Transaction tx, Map<String, Object> props, String[] labels) {
         String query = "CREATE (n";
@@ -218,10 +222,7 @@ public class InteractionImporter {
             Record record = result.single();
             return record.get("ID(n)").asLong();
         } catch (Exception e) {
-            e.printStackTrace();
-            System.err.println("Failed to create node in graph.");
-            System.exit(1);
-            return -1;
+            throw new IllegalStateException("Failed to create a node in the graph: " + props.get(DBID), e);
         }
     }
 
@@ -236,8 +237,13 @@ public class InteractionImporter {
     public static void createRelationship(Transaction tx, long sourceNode, long targetNode, RelationshipType type, Map<String, Object> props) {
         String query = "MATCH (n1:DatabaseObject) WHERE ID(n1) = $n1 " +
                 "MATCH (n2:DatabaseObject) WHERE ID(n2) = $n2 " +
-                "CREATE (n1)-[r:" + type.name() + "]->(n2) SET r = $props";
-        tx.run(query, parameters("n1", sourceNode, "n2", targetNode, "props", props));
+                "CREATE (n1)-[r:" + type.name() + "]->(n2) SET r = $props RETURN count(r) AS created";
+        // A node not found makes the MATCH empty and the CREATE nothing, silently: checked.
+        long created = tx.run(query, parameters("n1", sourceNode, "n2", targetNode, "props", props))
+                .single().get("created").asLong();
+        if (created != 1) {
+            throw new IllegalStateException("No " + type.name() + " relationship from node " + sourceNode + " to node " + targetNode);
+        }
     }
 
     /**
@@ -293,28 +299,34 @@ public class InteractionImporter {
         if (resource.getName().toLowerCase().contains("uniprot")) {
             refDbId = REACTOME_UNIPROT_REFERENCE_DATABASE;
             //displayName added below
-            _referenceEntityMap.put(IDENTIFIER, rawIdentifier.split("-")[0]);  //DO NOT MOVE OUTSIDE
+            // As graph-importer since aeeb562 (Aug 2025): a chain is O00187#PRO_... or O00187-PRO_...
+            String[] idSplit = rawIdentifier.split("[-#]");
+            _referenceEntityMap.put(IDENTIFIER, idSplit[0]);  //DO NOT MOVE OUTSIDE
             _referenceEntityMap.put("databaseName", "UniProt");
 
             String UNIPROT_BASE_URL = "https://www.uniprot.org/uniprotkb/";
             if (rawIdentifier.contains("-")) {
-                //for cases like UniProt:O00187-PRO_0000027598 MASP2
-                if(rawIdentifier.split("-")[1].contains("PRO")){
-                    _referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier.split("-")[0] +"/entry#" + rawIdentifier.split("-")[1]);
+                //for cases like UniProt:O00187#PRO_0000027598 MASP2
+                if(idSplit[1].contains("PRO")){
+                    _referenceEntityMap.put(URL, UNIPROT_BASE_URL + idSplit[0] +"/entry#" + idSplit[1]);
+                    _referenceEntityMap.put(ST_ID, "uniprot:" + rawIdentifier.replace("-PRO", "#PRO"));
                 } else {
                     _referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier + "/entry");
+                    _referenceEntityMap.put(ST_ID, "uniprot:" + rawIdentifier);
                 }
                 _referenceEntityMap.put(VARIANT_IDENTIFIER, rawIdentifier);
                 //isofromParent //TODO
                 schemaClass = ReferenceIsoform.class;
             } else {
                 _referenceEntityMap.put(URL, UNIPROT_BASE_URL + rawIdentifier + "/entry");
+                _referenceEntityMap.put(ST_ID, "uniprot:" + rawIdentifier);
                 schemaClass = ReferenceGeneProduct.class;
             }
         } else if (resource.getName().toLowerCase().contains("chebi")) {
             refDbId = REACTOME_CHEBI_REFERENCE_DATABASE;
             //displayName added below
             _referenceEntityMap.put(IDENTIFIER, rawIdentifier);  //DO NOT MOVE OUTSIDE
+            _referenceEntityMap.put(ST_ID, "chebi:" + rawIdentifier);
             String alias = interactor.getAlias();
             if(alias != null && !alias.isEmpty()) {
                 String[] name = new String[1];
@@ -329,6 +341,7 @@ public class InteractionImporter {
             refDbId = intActReferenceDatabaseDbId;
             _referenceEntityMap.put(IDENTIFIER, rawIdentifier);  //DO NOT MOVE OUTSIDE
             _referenceEntityMap.put("databaseName", resource.getName());
+            _referenceEntityMap.put(ST_ID, "intact:" + rawIdentifier);
             _referenceEntityMap.put(URL, EBI_BASE_URL + "/intact/query/" + rawIdentifier);
             schemaClass = ReferenceGeneProduct.class;
         }
@@ -429,60 +442,40 @@ public class InteractionImporter {
         System.out.print("\rRetrieving interaction data target ReferenceEntity instances...");
         importLogger.info("Retrieving target ReferenceEntity instances");
         Collection<Node> targetReferenceEntities = new HashSet<>();
-        try {
-            Result result = tx.run("MATCH (n:DatabaseObject:ReferenceEntity) RETURN n");
-            while (result.hasNext()) {
-                Record record = result.next();
-                Node re = record.get("n").asNode();
-                if (re != null) {
-                    String identifier = null;
-                    if (!re.get(VARIANT_IDENTIFIER).isNull()) {
-                        identifier = re.get(VARIANT_IDENTIFIER).asString();
-                    }
-                    if (identifier == null && !re.get(IDENTIFIER).isNull()) {
-                        identifier = re.get(IDENTIFIER).asString();
-                    }
-
-                    if (identifier != null) {
-                        String refDBQuery = "MATCH (n:DatabaseObject {dbId: $dbId})-[r:referenceDatabase]->(m:DatabaseObject:ReferenceDatabase) RETURN m";
-                        Result refDBResult = tx.run(refDBQuery, Collections.singletonMap("dbId", re.get(DBID).asLong()));
-                        Record refDBRecord = refDBResult.single();
-                        Node refDB = refDBRecord.get("m").asNode();
-                        identifier = refDB.get(NAME).asString() + ":" + identifier;
-
-                        referenceEntityMap.computeIfAbsent(identifier, k -> new HashSet<>()).add(re.get(DBID).asLong());
-
-                        String referersQuery = "MATCH (n:DatabaseObject:PhysicalEntity)-[r:referenceEntity]->(m:DatabaseObject:ReferenceEntity {dbId: $dbId}) RETURN n";
-                        Result referersResult = tx.run(referersQuery, Collections.singletonMap("dbId", re.get(DBID).asLong()));
-                        while (referersResult.hasNext()) {
-                            Record referersRecord = referersResult.next();
-                            Node physicalEntity = referersRecord.get("n").asNode();
-                            if (isTarget(tx, physicalEntity)) {
-                                targetReferenceEntities.add(re);
-                                break;  //Only one of the referral PhysicalEntities has to be a target for re to be added
-                            }
-                        }
-                    }
-                }
+        // One query, not three for each of the graph's ReferenceEntities: each with an identifier,
+        // its database's name, and whether an event uses an entity that refers to it (as
+        // graph-importer's isTarget asked MySQL: input, output, physicalEntity, diseaseEntity,
+        // regulator). One whose ReferenceDatabase is missing is skipped and counted, rather
+        // than ending the selection part way and importing the interactions of those before it.
+        String query = "MATCH (re:DatabaseObject:ReferenceEntity) " +
+                "WHERE re.variantIdentifier IS NOT NULL OR re.identifier IS NOT NULL " +
+                "OPTIONAL MATCH (re)-[:referenceDatabase]->(db:DatabaseObject:ReferenceDatabase) " +
+                "WITH re, head(collect(db.displayName)) AS database " +
+                "RETURN re, database, " +
+                "exists((re)<-[:referenceEntity]-(:DatabaseObject:PhysicalEntity)" +
+                "<-[:input|output|physicalEntity|diseaseEntity|regulator]-(:DatabaseObject)) AS target";
+        int withoutDatabase = 0;
+        Result result = tx.run(query);
+        while (result.hasNext()) {
+            Record record = result.next();
+            Node re = record.get("re").asNode();
+            if (record.get("database").isNull()) {
+                withoutDatabase++;
+                continue;
             }
-        } catch (Exception e) {
-            importLogger.error("An error occurred while retrieving the target ReferenceEntity instances", e);
+            String identifier = !re.get(VARIANT_IDENTIFIER).isNull()
+                    ? re.get(VARIANT_IDENTIFIER).asString()
+                    : re.get(IDENTIFIER).asString();
+            identifier = record.get("database").asString() + ":" + identifier;
+            referenceEntityMap.computeIfAbsent(identifier, k -> new HashSet<>()).add(re.get(DBID).asLong());
+            if (record.get("target").asBoolean()) targetReferenceEntities.add(re);
+        }
+        if (withoutDatabase > 0) {
+            importLogger.warn(withoutDatabase + " ReferenceEntity instances with an identifier have no ReferenceDatabase, and were skipped");
         }
         System.out.print("\rRetrieving interaction data target ReferenceEntity instances >> Done");
-        importLogger.info("Target ReferenceEntity instances retrieved");
+        importLogger.info("Target ReferenceEntity instances retrieved: " + targetReferenceEntities.size());
         return targetReferenceEntities;
-    }
-
-    private boolean isTarget(Transaction tx, Node physicalEntity) {
-        boolean isTarget = false;
-        try {
-            String query = "MATCH (n:DatabaseObject)-[r:input|output|physicalEntity|diseaseEntity|regulator]->(m:DatabaseObject:PhysicalEntity {dbId: $dbId}) RETURN m LIMIT 1";
-            Result result = tx.run(query, Collections.singletonMap("dbId", physicalEntity.get(DBID).asLong()));
-            isTarget = result.hasNext();
-        } catch (Exception e) {
-            /*nothing here*/
-        }
-        return isTarget;
     }
 
     /**

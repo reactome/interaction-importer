@@ -1,6 +1,7 @@
 import groovy.json.JsonSlurper
-// This Jenkinsfile is used by Jenkins to run the graph-importer step of Reactome's release.
-// It requires that OrthoInferenaceStableIDHistory has run successfully
+// This Jenkinsfile is used by Jenkins to run the interaction-importer step of Reactome's release:
+// IntAct's interactions added to the graph graph-importer built and installed, as graph-importer's
+// own -i did before. It requires that the graph-importer step has run successfully.
 def currentRelease
 def previousRelease
 pipeline
@@ -8,8 +9,9 @@ pipeline
 	agent any
 	stages
 	{
-		// This stage checks that upstream projects OrthoinferenceStableIdentifierHistory were run successfully for their last build.
-		stage('Check OrthoinferenceStableIdentifierHistory builds succeeded')
+		// This stage checks that the graph-importer step, which builds and installs the graph this
+		// adds to, was run successfully for its last build.
+		stage('Check GraphImporter build succeeded')
 		{
 			steps
 			{
@@ -18,7 +20,7 @@ pipeline
 					currentRelease = (pwd() =~ /Releases\/(\d+)\//)[0][1];
 					previousRelease = (pwd() =~ /Releases\/(\d+)\//)[0][1].toInteger() - 1;
 					// This queries the Jenkins API to confirm that the most recent builds of AddLinks-Download and Orthoinference were successful.
-					checkUpstreamBuildsSucceeded("OrthoinferenceStableIdentifierHistory", "$currentRelease")
+					checkUpstreamBuildsSucceeded("GraphImporter", "$currentRelease")
 				}
 			}
 		}
@@ -42,7 +44,10 @@ pipeline
 				{
 					withCredentials([usernamePassword(credentialsId: 'graphdbCredentials', passwordVariable: 'pass', usernameVariable: 'user')])
 					{
-						sh """java -jar target/InteractionImporter-exec.jar -h localhost -d reactome -u $user -p $pass """
+						// No -f: IntAct's current file is downloaded, as graph-importer's -i did. -d is
+						// the installed graph's database (graph-importer's Post stage). A graph that
+						// already has interactions is refused, so a rerun cannot add them twice.
+						sh """java -jar target/InteractionImporter-exec.jar -h localhost -d graph.db -u $user -p $pass """
 					}
 				}
 			}
@@ -64,9 +69,11 @@ pipeline
 				{
 					steps
 					{
-						checkout changelog: false, poll: false, scm: [$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: 'github credentials', url: 'https://github.com/reactome/graph-qa.git']]]
-						dir('./interaction-importer')
+						// In a folder of its own: checked out into the workspace, graph-qa's files would
+						// overwrite this project's (its pom.xml).
+						dir('./graph-qa')
 						{
+							checkout changelog: false, poll: false, scm: [$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: 'github credentials', url: 'https://github.com/reactome/graph-qa.git']]]
 							script
 							{
 								sh "mvn clean package -DskipTests"
